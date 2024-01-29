@@ -1,5 +1,6 @@
 import os.path
 import time
+import random
 import songs
 from music import Ui_MusicApp
 from PyQt5.QtCore import Qt, QUrl, QTimer
@@ -51,6 +52,8 @@ class MBeats(QMainWindow, Ui_MusicApp):
         self.next_btn.clicked.connect(self.play_next_song)
         self.previous_btn.clicked.connect(self.play_prev_song)
         self.delete_selected_btn.clicked.connect(self.remove_song)
+        self.loop_one_btn.clicked.connect(self.loop_current_song)
+        self.shuffle_songs_btn.clicked.connect(self.shuffle_song_list)
 
         self.volume_dial.valueChanged.connect(lambda: self.change_volume())
 
@@ -58,6 +61,8 @@ class MBeats(QMainWindow, Ui_MusicApp):
         self.music_slider.sliderMoved[int].connect(
             lambda value: self.player.setPosition(self.music_slider.value())
         )
+
+        self.player.mediaStatusChanged.connect(self.check_song_finished)
 
         # Window Movement
         self.initialPosition = self.pos()
@@ -98,9 +103,11 @@ class MBeats(QMainWindow, Ui_MusicApp):
                 minutes_dur, seconds_dur = divmod(remainder, 60)
                 song_duration = f'{int(hours_dur):02}:{int(minutes_dur):02}:{int(seconds_dur):02}'
 
-                # current_time = time.strftime('%H:%M:%S', time.localtime(slider_position/1000))
-                # song_duration = time.strftime('%H:%M:%S', time.localtime(slider_duration/1000))
                 self.time_label.setText(f'{current_time} / {song_duration}')
+        
+    def check_song_finished(self, status):
+        if status == QMediaPlayer.EndOfMedia:
+            self.play_next_song()
 
     # Interactions
     def add_song(self):
@@ -155,27 +162,87 @@ class MBeats(QMainWindow, Ui_MusicApp):
 
     def play_next_song(self):
         try:
-            current_media = self.player.media()
-            current_song_url = current_media.canonicalUrl().path()[1:]
-
-            current_song = songs.current_song_list.index(current_song_url)
-            next_song_index = (current_song + 1) % len(songs.current_song_list)
-            next_song = songs.current_song_list[next_song_index]
-            next_song_url = QMediaContent(QUrl.fromLocalFile(next_song))
-
-            self.player.setMedia(next_song_url)
-            self.player.play()
-            self.loaded_songs_listWidget.setCurrentRow(next_song_index)
-
-            self.current_song_name.setText(f'{os.path.basename(next_song)}')
-            self.current_song_path.setText(f'{os.path.dirname(next_song)}')
-
-            print(f'Now playing: {next_song}')
-        except IndexError:
-            print('Reached the last song in the list')
+            global looped
+            global is_shuffled
+            
+            if is_shuffled:
+                self.play_shuffled_next_song()
+            elif looped:
+                self.play_looped_next_song()
+            else:
+                self.play_default_next_song()
         except Exception as e:
             print(f'Could not play next song: {e}')
 
+    def play_default_next_song(self):
+        try:
+            if self.stackedWidget.currentIndex() == 0:
+                current_media = self.player.media()
+                current_media_url = current_media.canonicalUrl().path()[1:]
+                current_song_index = songs.current_song_list.index(current_media_url)
+
+                if current_song_index == len(songs.current_song_list)-1:
+                    next_song_index = 0
+                else:
+                    next_song_index = current_song_index+1
+                
+                next_song = songs.current_song_list[next_song_index]
+                self.loaded_songs_listWidget.setCurrentRow(next_song_index)
+                
+                song_url = QMediaContent(QUrl.fromLocalFile(next_song))
+                self.player.setMedia(song_url)
+                self.player.play()
+
+                self.current_song_name.setText(f'{os.path.basename(next_song)}')
+                self.current_song_path.setText(f'{os.path.dirname(next_song)}')
+
+                print(f'Now playing: {next_song}')
+        except Exception as e:
+            print(f'Could not play next song: {e}')
+
+    def play_looped_next_song(self):
+        try:
+            song = self.player.media().canonicalUrl().path()[1:]
+            song_index = songs.current_song_list.index(song)
+            song_url = QMediaContent(QUrl.fromLocalFile(song))
+
+            self.player.setMedia(song_url)
+            self.player.play()
+            self.loaded_songs_listWidget.setCurrentRow(song_index)
+
+            self.current_song_name.setText(f'{os.path.basename(song)}')
+            self.current_song_path.setText(f'{os.path.dirname(song)}')
+
+            print(f'Playing again: {song}')
+        except Exception as e:
+            print(f'Could not loop current song: {e}')
+
+    def play_shuffled_next_song(self):
+        try:
+            if self.stackedWidget.currentIndex() == 0:
+                current_media = self.player.media()
+                current_song_url = current_media.canonicalUrl().path()[1:]
+                current_song_index = songs.current_song_list.index(current_song_url)
+
+                available_songs = songs.current_song_list[:current_song_index] + songs.current_song_list[current_song_index+1:]
+                next_song_index = random.randint(0, len(available_songs)-1)
+                next_song = available_songs[next_song_index]
+                self.loaded_songs_listWidget.setCurrentRow(next_song_index)
+
+                next_song_url = QMediaContent(QUrl.fromLocalFile(next_song))
+                self.player.setMedia(next_song_url)
+                self.player.play()
+
+                self.current_song_name.setText(f'{os.path.basename(next_song)}')
+                self.current_song_path.setText(f'{os.path.dirname(next_song)}')
+
+                item = self.loaded_songs_listWidget.item(next_song_index)
+                item.setSelected(True)
+
+                print(f'Song list has shuffled. Now playing: {next_song}')
+        except Exception as e:
+            print(f'Could not shuffle the song list: {e}')
+    
     def play_prev_song(self):
         try:
             current_media = self.player.media()
@@ -194,7 +261,7 @@ class MBeats(QMainWindow, Ui_MusicApp):
                 self.player.play()
 
             self.current_song_name.setText(f'{os.path.basename(prev_song)}')
-            self.current_song_path.setText(f'{os.path.dirname(prev_song)}')            
+            self.current_song_path.setText(f'{os.path.dirname(prev_song)}')
 
             print(f'Now playing: {prev_song}')
         except Exception as e:
@@ -218,3 +285,31 @@ class MBeats(QMainWindow, Ui_MusicApp):
             self.player.setVolume(self.initial_volume)
         except Exception as e:
             print(f'Could not control volume: {e}')
+
+    def loop_current_song(self):
+        try:
+            global looped
+            global is_shuffled
+
+            if not looped:
+                looped = True
+                self.shuffle_songs_btn.setEnabled(False)
+            else:
+                looped = False
+                self.shuffle_songs_btn.setEnabled(True)
+        except Exception as e:
+            print(f'Could not loop current song: {e}')
+
+    def shuffle_song_list(self):
+        try:
+            global is_shuffled
+            global looped
+
+            if not is_shuffled:
+                is_shuffled = True
+                self.loop_one_btn.setEnabled(False)
+            else:
+                is_shuffled = False
+                self.loop_one_btn.setEnabled(True)
+        except Exception as e:
+            print(f'Could not shuffle song list: {e}')
